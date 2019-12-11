@@ -34,11 +34,11 @@ class RNNTorch(nn.Module):
         self.rnn = nn.RNN(embed_size, hidden_size)
         self.out = nn.Linear(hidden_size, word_size)
 
-    def forward(self, input):
+    def forward(self, input, hidden=None):
         """
             input: seqlen x batch
         """
         embed = self.embedding(input)
-        rnn_out, _ = self.rnn(embed)
+        rnn_out, hidden = self.rnn(embed, hidden)
         output = self.out(rnn_out)
-        return output
+        return output, hidden
