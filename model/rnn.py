@@ -1,4 +1,7 @@
 from torch import nn
+import torch
+import torch.nn.functional as F
+
 
 class RNNNative(nn.Module):
     """
@@ -40,5 +43,20 @@ class RNNTorch(nn.Module):
         """
         embed = self.embedding(input)
         rnn_out, hidden = self.rnn(embed, hidden)
+        output = self.out(rnn_out)
+        return output, hidden
+
+class LSTMxv6(nn.Module):
+    def __init__(self, word_size=129, hidden_size=512, num_layer=1):
+        super(LSTMxv6, self).__init__()
+        self.word_size = word_size
+        self.hidden_size = hidden_size
+        self.rnn = nn.LSTM(word_size, hidden_size, num_layer)
+        self.out = nn.Linear(hidden_size, word_size)
+
+    def forward(self, input, hidden=None):
+        # import pdb; pdb.set_trace()
+        onehot = F.one_hot(input, num_classes=self.word_size).float() # seqlen x batch x word_size
+        rnn_out, hidden = self.rnn(onehot, hidden)
         output = self.out(rnn_out)
         return output, hidden

@@ -12,13 +12,13 @@ import time
 
 def bench_rnn_forward(batch_size=512, num_batch=10, vocab_size=1024, length=30, embed_size=128,\
                         hidden_size=128, delta=5):
-    device = torch.device("cuda:7" if torch.cuda.is_available() else "cpu")
+    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
     rnn = RNNNative(vocab_size, embed_size, hidden_size).to(device)
     delta = np.random.randint(-delta, delta, size=num_batch)
     input = torch.LongTensor(batch_size).random_(0, vocab_size).to(device)
+    hx = torch.randn(batch_size, hidden_size).to(device)
     start = time.time()
     for i in range(num_batch):
-        hx = torch.randn(batch_size, hidden_size).to(device)
         for j in range(length + delta[i]):
             output, hx = rnn(input, hx)
     end = time.time()
@@ -34,8 +34,8 @@ def bench_rnn_forward(batch_size=512, num_batch=10, vocab_size=1024, length=30, 
 
     input = torch.LongTensor(1, batch_size).random_(0, vocab_size).to(device)
     start = time.time()
+    hx = torch.randn(1, batch_size, hidden_size).to(device)
     for i in range(num_batch):
-        hx = torch.randn(1, batch_size, hidden_size).to(device)
         for j in range(length + delta[i]):
             output, hx = rnn(input, hx)
     end = time.time()
@@ -56,42 +56,41 @@ def bench_rnn_forward(batch_size=512, num_batch=10, vocab_size=1024, length=30, 
 
 def bench_rnn_sample(batch_size=512, num_batch=10, vocab_size=1024, length=30, embed_size=128,\
                         hidden_size=128, delta=5):
-    device = torch.device("cuda:7" if torch.cuda.is_available() else "cpu")
+    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
     rnn = RNNNative(vocab_size, embed_size, hidden_size).to(device)
     delta = np.random.randint(-delta, delta, size=num_batch)
     input = torch.LongTensor(batch_size).random_(0, vocab_size).to(device)
-    start = time.time()
-    for i in range(num_batch):
-        hx = torch.randn(batch_size, hidden_size).to(device)
-        for j in range(length + delta[i]):
-            output, hx = rnn(input, hx)
-    end = time.time()
-    print("Elapsed time for RNN {:.3f}, avg length: {:.3f}".format(end - start, length + np.mean(delta)))
+    hx = torch.randn(batch_size, hidden_size).to(device)
 
+    start = time.time()
+    with torch.no_grad():
+        for i in range(num_batch):
+            for j in range(length + delta[i]):
+                output, hx = rnn(input, hx)
+                prob_dist = torch.distributions.Categorical(logits=output) # probs should be of size batch x classes
+                # import pdb; pdb.set_trace()
+                input = prob_dist.sample()
+    end = time.time()
+    print("Elapsed time for Sampling RNNNative {:.3f}, avg length: {:.3f}".format(end - start, length + np.mean(delta)))
+
+    hx = torch.randn(1, batch_size, hidden_size).to(device)
+    input = torch.LongTensor(1, batch_size).random_(0, vocab_size).to(device)
     rnn = RNNTorch(vocab_size, embed_size, hidden_size).to(device)
-    input = torch.LongTensor(length, batch_size).random_(0, vocab_size).to(device)
     start = time.time()
-    for i in range(num_batch):
-        output = rnn(input)
+    with torch.no_grad():
+        for i in range(num_batch):
+            for j in range(length + delta[i]):
+                output, hx = rnn(input, hx)
+                prob_dist = torch.distributions.Categorical(logits=output) # probs should be of size batch x classes
+                # import pdb; pdb.set_trace()
+                input = prob_dist.sample()
     end = time.time()
-    print("Elapsed time for RNN {:.3f}, avg length: {:.3f}".format(end - start, length + np.mean(delta)))
-    
-    mlp = MLP(device, vocab_size, embed_size, hidden_size, length).to(device)
-    input = []
-    hx = []
-    for i in range(length):
-        input.append(torch.LongTensor(batch_size).random_(0, vocab_size).to(device))
-        hx.append(torch.randn(batch_size, hidden_size).to(device))
-    start = time.time()
-    for i in range(num_batch):
-        output = mlp(input, hx)
-    end = time.time()
-    print("Elapsed time for MLP {:.3f}".format(end - start))
+    print("Elapsed time for Sampling RNNTorch {:.3f}, avg length: {:.3f}".format(end - start, length + np.mean(delta)))
 
 
 def bench_rnn_backward(batch_size=512, num_batch=100, vocab_size=1024, length=30, embed_size=128,\
                         hidden_size=128, delta=5):
-    device = torch.device("cuda:7" if torch.cuda.is_available() else "cpu")
+    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
     rnn = RNNNative(vocab_size, embed_size, hidden_size).to(device)
     delta = np.random.randint(-delta, delta, size=num_batch)
     input = torch.LongTensor(batch_size).random_(0, vocab_size).to(device)
@@ -99,19 +98,20 @@ def bench_rnn_backward(batch_size=512, num_batch=100, vocab_size=1024, length=30
     criteria = nn.CrossEntropyLoss()
     optimizer = optim.SGD(rnn.parameters(), lr=0.01)
     
-
-    start = time.time()
+    time_elapsed = 0
     for i in range(num_batch):
-        loss = 0
+        input = torch.LongTensor(batch_size).random_(0, vocab_size).to(device)
         hx = torch.randn(batch_size, hidden_size).to(device)
+        loss = 0
         optimizer.zero_grad()
+        start = time.time()
         for j in range(length + delta[i]):
             output, hx = rnn(input, hx)
             loss += criteria(output, label)
         loss.backward()
         optimizer.step()
-    end = time.time()
-    print("Elapsed time for RNNNative backward {:.3f}, avg length: {:.3f}".format(end - start, length + np.mean(delta)))
+        time_elapsed += time.time() - start
+    print("Elapsed time for RNNNative backward {:.3f}, avg length: {:.3f}".format(time_elapsed, length + np.mean(delta)))
 
     rnn = RNNTorch(vocab_size, embed_size, hidden_size).to(device)
     input = torch.LongTensor(length, batch_size).random_(0, vocab_size).to(device)
@@ -121,27 +121,29 @@ def bench_rnn_backward(batch_size=512, num_batch=100, vocab_size=1024, length=30
         loss = 0
         optimizer.zero_grad()
         output, _ = rnn(input)
-        loss += criteria(output.view(length*batch_size, -1), label)
+        loss = criteria(output.view(length*batch_size, -1), label)
         loss.backward()
         optimizer.step()
     end = time.time()
     print("Elapsed time for RNNTorch backward {:.3f}, avg length: {:.3f}".format(end - start, length + np.mean(delta)))
 
     
-    start = time.time()
     input = torch.LongTensor(1, batch_size).random_(0, vocab_size).to(device)
     label = torch.LongTensor(batch_size).random_(0, vocab_size).to(device)
+    hx = torch.randn(1, batch_size, hidden_size).to(device)
+    time_elapsed = 0
     for i in range(num_batch):
         loss = 0
-        hx = torch.randn(1, batch_size, hidden_size).to(device)
+        input = torch.LongTensor(1, batch_size).random_(0, vocab_size).to(device)
         optimizer.zero_grad()
+        start = time.time()
         for j in range(length + delta[i]):
             output, hx = rnn(input, hx)
             loss += criteria(output.view(batch_size, -1), label)
         loss.backward()
         optimizer.step()
-    end = time.time()
-    print("Elapsed time for RNNNative backward {:.3f}, avg length: {:.3f}".format(end - start, length + np.mean(delta)))
+        time_elapsed += time.time() - start
+    print("Elapsed time for RNNTorch step backward {:.3f}, avg length: {:.3f}".format(time_elapsed, length + np.mean(delta)))
 
     # mlp 
     label = torch.LongTensor(batch_size).random_(0, vocab_size).to(device)
@@ -186,5 +188,6 @@ if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser()
     args = parser.parse_args()
+    bench_rnn_sample(num_batch=1)
     bench_rnn_forward(num_batch=1)
     bench_rnn_backward(num_batch=1)
